@@ -7,7 +7,7 @@
 // map can actually draw, via ALIAS below. Anything genuinely undrawable (hands,
 // ankles, "cardiovascular system") maps to null and is dropped rather than guessed at.
 
-import { EXIDX } from './exercises.js'
+import { EXIDX , smOf } from './exercises.js'
 
 // The muscles a map can shade, in head-to-toe order — also the order of any list
 // built from them, so "what am I neglecting" reads top-down like a body.
@@ -78,7 +78,7 @@ export function musclesOf(ex) {
     if (slug) out[slug] = Math.max(out[slug] || 0, w)
   }
   add(ex.tg, 1)
-  ;(ex.sm || []).forEach(m => add(m, SECONDARY))
+  ;smOf(ex).forEach(m => add(m, SECONDARY))
   // Nothing recognised (custom exercises, or a target we don't draw) — use the body part.
   if (!Object.keys(out).length) Object.assign(out, BY_BODYPART[ex.bp] || {})
   return out
@@ -108,7 +108,7 @@ export function loadOf(items) {
  */
 export const loadOfWorkouts = (workouts, pick) =>
   loadOf((workouts || []).flatMap(w =>
-    (w.entries || []).map(e => ({ id: e.id, sets: (e.sets || []).filter(s => s.done && (!pick || pick(s))).length }))))
+    (w.entries || []).map(e => ({ id: e.id, sets: (e.sets || []).filter(s => s.done && !s.warmup && (!pick || pick(s))).length }))))
 
 /** Load a routine *would* produce, from its planned set counts. */
 export const loadOfRoutine = routine =>
@@ -116,14 +116,34 @@ export const loadOfRoutine = routine =>
 
 /** Load for a workout still in progress — the sets ticked so far. */
 export const loadOfActive = active =>
-  loadOf((active?.entries || []).map(e => ({ id: e.id, sets: (e.sets || []).filter(s => s.done).length })))
+  loadOf((active?.entries || []).map(e => ({ id: e.id, sets: (e.sets || []).filter(s => s.done && !s.warmup).length })))
 
 /**
- * Shade buckets 0–4 per muscle, relative to the hardest-worked muscle in the same
- * window. Relative rather than absolute on purpose: the map answers "is my training
- * balanced", which only means anything as a comparison within one period.
+ * Shade buckets 0–4 per muscle.
+ *
+ * With no `thresholds`, levels remain relative to the hardest-worked muscle in the same
+ * window. This is the original balance-map behavior. When `thresholds` is supplied, levels
+ * use an absolute scale instead: it is an ordered array of `{ at, level, exclusive? }` rules,
+ * and the last matching rule wins. An exclusive rule matches values strictly greater than
+ * `at`; otherwise the boundary is inclusive. Values below the first matching rule are l0.
+ * Absolute rules let recovery views keep fixed semantic bands instead of renormalizing to the
+ * strongest muscle on screen.
  */
-export function levelsOf(load) {
+export function levelsOf(load, thresholds) {
+  if (thresholds) {
+    const lv = {}
+    MUSCLES.forEach(m => {
+      const value = Number(load[m] || 0)
+      let level = 0
+      for (const rule of thresholds) {
+        const matches = rule.exclusive ? value > rule.at : value >= rule.at
+        if (matches) level = Math.max(0, Math.min(4, rule.level))
+      }
+      lv[m] = level
+    })
+    return lv
+  }
+
   const max = Math.max(0, ...MUSCLES.map(m => load[m] || 0))
   const lv = {}
   MUSCLES.forEach(m => {
