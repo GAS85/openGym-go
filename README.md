@@ -20,7 +20,7 @@ For frontend issues please open ticket in upstream repository [OpenGym](https://
 [docker-pulls]: https://img.shields.io/docker/pulls/gas85/opengym-go
 [docker-size]: https://img.shields.io/docker/image-size/gas85/opengym-go/latest
 
-[![Support Original Project](https://img.shields.io/badge/Support_original_repository-grey?logo=buymeacoffee)](https://gitea.com/DuarteSantos/openGym)
+➡️➡️➡️ [![Support Original Project](https://img.shields.io/badge/Support_original_Project-blue?logo=buymeacoffee)](https://gitea.com/DuarteSantos/openGym) ⬅️⬅️⬅️
 
 ## Layout
 

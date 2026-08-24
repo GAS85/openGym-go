@@ -59,4 +59,4 @@ ENV PORT=3000
 HEALTHCHECK --interval=5m \
             --timeout=5s \
             --retries=3 \
-            CMD wget --spider -q "http://127.0.0.1:${NGINX_PORT}/api/config" || exit 1
+            CMD wget --spider -q "http://127.0.0.1:${NGINX_PORT}/api/config" -U docker-healthcheck || exit 1
