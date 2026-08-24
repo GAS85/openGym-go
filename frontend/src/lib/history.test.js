@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { modeOf, isTimed, fmtSec, setLabel, defaultConfig, buildSets, freestyleConfig, exLine, workoutVolume, effortOf, stepEffort, capEffort, isBw, isPerSide, sideReps, repStep, cascadeWeight, insertWarmupRow, removeRowAt, pairAdjacent, unpairSuperset, supersetUnits } from './history.js'
+import { modeOf, isTimed, fmtSec, setLabel, defaultConfig, buildSets, exLine, workoutVolume, effortOf, stepEffort, capEffort, isBw, isPerSide, sideReps, repStep } from './history.js'
 import { EXDB } from './exercises.js'
 
 // Real ids out of the shipped catalogue, so the body-part fallback is exercised for real.
@@ -8,49 +8,6 @@ const CARDIO = EXDB.find(e => e.bp === 'cardio').id
 // defaults to bodyweight and would quietly send every label test down the other path.
 const LIFT = EXDB.find(e => e.bp !== 'cardio' && e.eq !== 'body weight').id
 const BW = EXDB.find(e => e.eq === 'body weight').id
-
-describe('superset editing', () => {
-  it('pairs adjacent entries without mutating the source and keeps the display units contiguous', () => {
-    const entries = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
-
-    const paired = pairAdjacent(entries, 1, 2, 'sg-new')
-
-    expect(paired).toEqual([{ id: 'a' }, { id: 'b', sg: 'sg-new' }, { id: 'c', sg: 'sg-new' }])
-    expect(entries).toEqual([{ id: 'a' }, { id: 'b' }, { id: 'c' }])
-    expect(supersetUnits(paired)).toEqual([[0], [1, 2]])
-  })
-
-  it('merges both contiguous groups when their boundary entries are paired', () => {
-    const entries = [
-      { id: 'a', sg: 'left' }, { id: 'b', sg: 'left' },
-      { id: 'c', sg: 'right' }, { id: 'd', sg: 'right' }
-    ]
-
-    const merged = pairAdjacent(entries, 1, 2)
-
-    expect(merged.map(e => e.sg)).toEqual(['left', 'left', 'left', 'left'])
-    expect(entries.map(e => e.sg)).toEqual(['left', 'left', 'right', 'right'])
-  })
-
-  it('unpairs one entry and removes sg values left without an adjacent partner', () => {
-    const entries = [
-      { id: 'a', sg: 'group' }, { id: 'b', sg: 'group' }, { id: 'c', sg: 'group' },
-      { id: 'd', sg: 'orphan' }
-    ]
-
-    const unpaired = unpairSuperset(entries, 1)
-
-    expect(unpaired).toEqual([{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }])
-    expect(entries.map(e => e.sg)).toEqual(['group', 'group', 'group', 'orphan'])
-  })
-
-  it('rejects a non-adjacent pairing request', () => {
-    const entries = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
-
-    expect(() => pairAdjacent(entries, 0, 2, 'sg-invalid')).toThrow(/adjacent/)
-    expect(entries).toEqual([{ id: 'a' }, { id: 'b' }, { id: 'c' }])
-  })
-})
 
 describe('modeOf', () => {
   it('falls back to the body part when a plan has no mode — every existing plan keeps working', () => {
@@ -379,80 +336,6 @@ describe('exLine', () => {
 
 const emptyS = { workouts: [], exWeights: {} }
 
-describe('freestyleConfig', () => {
-  it('inherits the last target and completed set count for a newly added exercise', () => {
-    const S = {
-      exWeights: {},
-      workouts: [{
-        d: '2026-01-01',
-        entries: [{
-          id: LIFT,
-          target: { mode: 'reps', sets: 4, reps: 8, weight: 60, prog: 'linear' },
-          sets: [
-            { w: 60, r: 8, done: true },
-            { w: 62.5, r: 7, done: true },
-            { w: 62.5, r: 6, done: true },
-            { w: 62.5, r: 5, done: true }
-          ]
-        }]
-      }]
-    }
-    const cfg = freestyleConfig(S, { id: LIFT, mode: 'reps', sets: 3, reps: 10, weight: 0 })
-
-    expect(cfg).toEqual({ id: LIFT, mode: 'reps', sets: 4, reps: 8, weight: 60, prog: 'linear' })
-    expect(buildSets(S, cfg)).toEqual([
-      { w: 60, r: 8, done: false },
-      { w: 62.5, r: 7, done: false },
-      { w: 62.5, r: 6, done: false },
-      { w: 62.5, r: 5, done: false }
-    ])
-  })
-
-  it('inherits the target for timed and cardio exercises too', () => {
-    const timed = {
-      exWeights: {},
-      workouts: [{
-        d: '2026-01-02',
-        entries: [{
-          id: LIFT,
-          target: { mode: 'time', sets: 2, sec: 60, weight: 15 },
-          sets: [{ sec: 55, w: 15, done: true }, { sec: 60, w: 17.5, done: true }]
-        }]
-      }]
-    }
-    const cardio = {
-      exWeights: {},
-      workouts: [{
-        d: '2026-01-03',
-        entries: [{
-          id: CARDIO,
-          target: { sets: 2, min: 30, speed: 7 },
-          sets: [{ min: 28, speed: 7, done: true }, { min: 30, speed: 7.5, done: true }]
-        }]
-      }]
-    }
-
-    const timedCfg = freestyleConfig(timed, { id: LIFT, mode: 'time', sets: 3, sec: 45, weight: 0 })
-    expect(timedCfg).toEqual({ id: LIFT, mode: 'time', sets: 2, sec: 60, weight: 15 })
-    expect(buildSets(timed, timedCfg)).toEqual([
-      { sec: 55, w: 15, done: false },
-      { sec: 60, w: 17.5, done: false }
-    ])
-
-    const cardioCfg = freestyleConfig(cardio, { id: CARDIO, sets: 1, min: 20, speed: 8 })
-    expect(cardioCfg).toEqual({ id: CARDIO, sets: 2, min: 30, speed: 7 })
-    expect(buildSets(cardio, cardioCfg)).toEqual([
-      { min: 28, speed: 7, done: false },
-      { min: 30, speed: 7.5, done: false }
-    ])
-  })
-
-  it('keeps the supplied defaults when there is no completed matching workout', () => {
-    const cfg = freestyleConfig(emptyS, { id: LIFT, mode: 'reps', sets: 3, reps: 10, weight: 50 })
-    expect(cfg).toEqual({ id: LIFT, mode: 'reps', sets: 3, reps: 10, weight: 50 })
-  })
-})
-
 describe('buildSets', () => {
   it('builds reps sets from the plan when there is no history', () => {
     expect(buildSets(emptyS, { id: LIFT, sets: 3, reps: 8, weight: 50 }))
@@ -491,14 +374,6 @@ describe('buildSets', () => {
     const S = { exWeights: { [LIFT]: { w: 75 } }, workouts: [{ d: '2026-01-01', entries: [{ id: LIFT, sets: [{ w: 60, r: 10, done: true }] }] }] }
     expect(buildSets(S, { id: LIFT, sets: 1, reps: 8, weight: 50 })).toEqual([{ w: 75, r: 10, done: false }])
   })
-
-  it('can preserve each last set weight for freestyle instead of using the working-weight hint', () => {
-    const S = { exWeights: { [LIFT]: { w: 75 } }, workouts: [{ d: '2026-01-01', entries: [{ id: LIFT, sets: [
-      { w: 60, r: 10, done: true }, { w: 62.5, r: 8, done: true }
-    ] }] }] }
-    expect(buildSets(S, { id: LIFT, sets: 2, reps: 8, weight: 50 }, { preferLast: true }))
-      .toEqual([{ w: 60, r: 10, done: false }, { w: 62.5, r: 8, done: false }])
-  })
 })
 
 describe('workoutVolume', () => {
@@ -519,56 +394,5 @@ describe('workoutVolume', () => {
   it('leaves an unloaded bodyweight set at zero volume rather than inventing a number', () => {
     const w = { entries: [{ id: BW, target: { bodyweight: true }, sets: [{ w: 0, r: 20, done: true }] }] }
     expect(workoutVolume(w)).toBe(0)
-  })
-})
-
-
-describe('session row helpers', () => {
-  it('cascadeWeight propagates to same-flag undone rows and never rewrites done sets', () => {
-    const rows = [
-      { warmup: true, w: 20, done: true },
-      { warmup: true, w: 20, done: false },
-      { w: 60, done: true },
-      { w: 60, done: false },
-      { w: 60, done: false },
-    ]
-    const next = cascadeWeight(rows, 2, 62.5)
-    expect(next[2].w).toBe(60)             // done set untouched
-    expect(next[3].w).toBe(62.5)           // same flag (work), undone
-    expect(next[4].w).toBe(62.5)           // same flag (work), undone
-    expect(next[1].w).toBe(20)             // different flag (warm-up) untouched
-  })
-
-  it('cascadeWeight deleting the weight removes the key from following undone rows only', () => {
-    const rows = [
-      { w: 60, done: true },
-      { w: 60, done: false },
-      { w: 60, done: false },
-    ]
-    const next = cascadeWeight(rows, 0, null)
-    expect(next[0].w).toBe(60)             // done set untouched
-    expect('w' in next[1]).toBe(false)
-    expect('w' in next[2]).toBe(false)
-  })
-
-  it('insertWarmupRow inserts before the first work row and copies the last warm-up values', () => {
-    const rows = [
-      { warmup: true, w: 20, r: 8, done: true },
-      { warmup: true, w: 30, r: 8, done: false },
-      { w: 60, r: 8, done: false },
-    ]
-    const next = insertWarmupRow(rows, 'reps', { reps: 8 })
-    expect(next.length).toBe(4)
-    expect(next[2].warmup).toBe(true)
-    expect(next[2].w).toBe(30)             // copies the preceding warm-up
-    expect(next[3].w).toBe(60)             // work row still after the warm-up block
-  })
-
-  it('removeRowAt never empties an entry below one row', () => {
-    expect(removeRowAt([{ w: 60 }], 0).length).toBe(1)
-    const rows = [{ w: 60 }, { w: 70 }]
-    const next = removeRowAt(rows, 0)
-    expect(next.length).toBe(1)
-    expect(next[0].w).toBe(70)
   })
 })

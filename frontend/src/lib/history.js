@@ -142,60 +142,6 @@ export function cleanupSg(ex) {
   })
 }
 
-// Return the contiguous run around an entry that shares its superset id. A repeated id in a
-// separated part of the list is deliberately not included: the display semantics are adjacent
-// entries sharing one id, not every entry that happens to carry that id.
-function contiguousSgGroup(items, idx) {
-  const sg = items[idx]?.sg
-  if (!sg) return [idx]
-  let first = idx
-  let last = idx
-  while (first > 0 && items[first - 1]?.sg === sg) first--
-  while (last + 1 < items.length && items[last + 1]?.sg === sg) last++
-  return Array.from({ length: last - first + 1 }, (_, i) => first + i)
-}
-
-function freshSg(items, first, second) {
-  const base = `sg-${Math.min(first, second)}-${Math.max(first, second)}`
-  let sg = base
-  let n = 2
-  while (items.some(e => e.sg === sg)) sg = `${base}-${n++}`
-  return sg
-}
-
-// Purely pair two adjacent entries. Existing contiguous groups on either side are merged, so
-// pairing the end of one group with the start of another produces one display unit. A caller can
-// provide a group id (useful when restoring a known id); otherwise an existing id is preferred,
-// with a deterministic unused id for two previously ungrouped entries.
-export function pairAdjacent(items, first, second, groupId) {
-  if (!Array.isArray(items)) throw new TypeError('Superset entries must be an array')
-  if (!Number.isInteger(first) || !Number.isInteger(second) || !items[first] || !items[second]) {
-    throw new RangeError('Superset entry indexes are invalid')
-  }
-  if (Math.abs(first - second) !== 1) throw new RangeError('Superset entries must be adjacent')
-
-  const next = items.map(e => ({ ...e }))
-  const left = Math.min(first, second)
-  const right = Math.max(first, second)
-  const group = groupId || next[left].sg || next[right].sg || freshSg(next, left, right)
-  const members = new Set([...contiguousSgGroup(next, left), ...contiguousSgGroup(next, right)])
-  members.forEach(i => { next[i].sg = group })
-  return next
-}
-
-// Remove one entry from its superset and clean any ids that no longer have an adjacent partner.
-// This is pure so the active workout can replace its entries atomically through the store.
-export function unpairSuperset(items, idx) {
-  if (!Array.isArray(items)) throw new TypeError('Superset entries must be an array')
-  if (!Number.isInteger(idx) || !items[idx]) throw new RangeError('Superset entry index is invalid')
-  const next = items.map(e => ({ ...e }))
-  delete next[idx].sg
-  next.forEach((e, i) => {
-    if (e.sg && !(next[i - 1]?.sg === e.sg || next[i + 1]?.sg === e.sg)) delete e.sg
-  })
-  return next
-}
-
 export function lastEntryFor(S, exId) {
   for (let i = S.workouts.length - 1; i >= 0; i--) {
     const en = S.workouts[i].entries.find(e => e.id === exId)
@@ -205,21 +151,6 @@ export function lastEntryFor(S, exId) {
     if (en && en.sets.some(s => s.done)) return { d: S.workouts[i].d, sets: en.sets.filter(s => s.done), target: en.target || null }
   }
   return null
-}
-
-// A freestyle exercise starts with the last target the user actually trained, rather than the
-// generic config sheet defaults used when there is no history. The set rows themselves are still
-// built by buildSets(), which copies each completed set by position; only the target shape and
-// number of rows need to be seeded here so the config sheet and the rows agree.
-export function freestyleConfig(S, cfg) {
-  const last = lastEntryFor(S, cfg.id)
-  if (!last) return { ...cfg }
-  return {
-    ...cfg,
-    ...(last.target || {}),
-    id: cfg.id,
-    sets: Math.max(1, last.sets.length)
-  }
 }
 export function bestWeightFor(S, exId) {
   let best = 0
@@ -242,11 +173,10 @@ export function effectiveRoutine(S, iso) {
   const id = effectiveRoutineId(S, iso)
   return id ? S.routines.find(r => r.id === id) || null : null
 }
-export function buildSets(S, cfg, options = {}) {
+export function buildSets(S, cfg) {
   const last = lastEntryFor(S, cfg.id)
   const n = Math.max(1, cfg.sets || 1)
   const mode = modeOf(cfg)
-  const preferLast = !!options.preferLast
   const sets = []
   // Last time's set at the same position, falling back to its final set when the plan grew.
   const prevAt = i => (last ? (last.sets[i] || last.sets[last.sets.length - 1]) : null)
@@ -272,9 +202,7 @@ export function buildSets(S, cfg, options = {}) {
   for (let i = 0; i < n; i++) {
     const prev = prevAt(i)
     const usable = prev && prev.r > 0 ? prev : null
-    // Planned sessions may use the confirmed working weight, while freestyle should reproduce
-    // the load of each matching set when that option is requested.
-    const w = preferLast && usable ? usable.w : (conf && conf.w > 0 ? conf.w : (usable ? usable.w : cfg.weight))
+    const w = conf && conf.w > 0 ? conf.w : (usable ? usable.w : cfg.weight)
     sets.push({ w, r: usable ? usable.r : cfg.reps, done: false })
   }
   return sets
@@ -323,50 +251,4 @@ export function streakWeeks(S) {
     cur.setDate(cur.getDate() - 7)
   }
   return streak
-}
-
-/**
- * Cascade a weight change forward: following sets of the same warm-up flag that are still
- * undone take the new value (null deletes the key). Done sets are never rewritten.
- */
-export function cascadeWeight(rows, from, value) {
-  const warm = !!rows[from]?.warmup
-  const next = rows.slice()
-  for (let j = from + 1; j < next.length; j++) {
-    if (!!next[j].warmup === warm && !next[j].done) {
-      if (value == null) delete next[j].w
-      else next[j].w = value
-    }
-  }
-  return next
-}
-
-/** Insert a warm-up row before the first work row, copying the preceding warm-up's values. */
-export function insertWarmupRow(rows, mode, target) {
-  const firstWork = rows.findIndex(x => !x.warmup)
-  const at = firstWork === -1 ? rows.length : firstWork
-  const l = rows[at - 1] || rows[rows.length - 1]
-  const warm = mode === 'cardio'
-    ? { min: l ? l.min : (target.min || 20), speed: l ? l.speed : (target.speed || 8), done: false, warmup: true }
-    : mode === 'time'
-      ? { sec: l ? l.sec : (target.sec || 45), w: l ? (l.w || 0) : (target.weight || 0), done: false, warmup: true }
-      : { w: l ? l.w : 0, r: l ? l.r : target.reps, done: false, warmup: true }
-  const next = rows.slice()
-  next.splice(at, 0, warm)
-  return next
-}
-
-/** Remove the row at `i`, never emptying the entry below one row. */
-export function removeRowAt(rows, i) {
-  if (rows.length <= 1) return rows.slice()
-  const next = rows.slice()
-  next.splice(i, 1)
-  return next
-}
-
-/** Completed non-warm-up sets across a workout's entries. */
-export function workSetsDone(w) {
-  return (w?.entries || []).reduce(
-    (n, e) => n + (e.sets || []).filter(s => s.done && !s.warmup).length, 0,
-  )
 }
