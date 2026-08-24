@@ -1,65 +1,53 @@
-# Runs on pull requests too — the other two workflows only fire on push to main, so
-# contributed changes used to reach main without anything ever having been run.
-name: Tests
-
+name: Dev Test
 on:
-  pull_request:
-    paths:
-      - 'frontend/**'
-      - 'mcp/**'
-      - '.github/workflows/test.yml'
+  workflow_call: # Allow this workflow to be called by other workflows
+    inputs: {}
+    secrets:
+      CODECOV_TOKEN:
+        required: true
   push:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - 'mcp/**'
-      - '.github/workflows/test.yml'
-  workflow_dispatch:
+    branches-ignore:
+      - "dev_go"
+      - "main_go"
+    tags-ignore:
+      - "v*.*.*"
 
-permissions:
-  contents: read
-
-concurrency:
-  group: test-${{ github.ref }}
-  cancel-in-progress: true
+  pull_request:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v7
-      # node:22-alpine in web/Dockerfile and api/Dockerfile — CI must match production.
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-        working-directory: frontend
-      - run: npm test
-        working-directory: frontend
-      # A broken import or bad JSX fails the build long before any test covers it.
-      - run: npm run build
-        working-directory: frontend
-      - run: node scripts/check-locales.mjs
-        working-directory: frontend
+      - name: Checkout
+        # https://github.com/actions/checkout/releases/tag/v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
-  mcp:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - name: Set up Go
+        # https://github.com/actions/setup-go/releases/tag/v6.4.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: mcp/package-lock.json
-      - run: npm ci
-        working-directory: mcp
-      - run: npm test
-        working-directory: mcp
-      # The one check the vitest suite structurally cannot make. The MCP server is a bare node
-      # process, but vitest runs its tests through Vite — import.meta.glob, .jsx imports and
-      # ?raw all resolve happily there. That is how a Vite-only import reached a shared lib
-      # module with 33 green tests standing over a server that died on startup.
-      - run: npm run check:node-loadable
-        working-directory: mcp
+          go-version: "1.26.1"
+          cache: true # Handles Go's read-only module files correctly; replaces actions/cache
+
+      - name: Download dependencies
+        run: cd app; go mod download
+
+      - name: Run tests with coverage
+        run: |
+          go test ./... \
+            -covermode=atomic \
+            -coverpkg=./... \
+            -coverprofile=coverage.txt \
+            -v \
+            -timeout 120s
+
+      - name: Run tests with race detector
+        run: go test ./... -race -v -timeout 120s
+
+      - name: Upload coverage to Codecov
+        # https://github.com/codecov/codecov-action/releases/tag/v6.0.1
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
+        with:
+          files: coverage.txt
+          token: ${{ secrets.CODECOV_TOKEN }}
