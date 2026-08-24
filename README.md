@@ -4,7 +4,7 @@
 
 Go port of the original [OpenGym](https://gitea.com/DuarteSantos/openGym) single-file Node.js server. Same behavior: passkey (WebAuthn) auth, JSON-file storage, signed session cookies, Web Push notifications, rest-timer alerts, daily workout reminders, live "training now" presence, and the admin dashboard.
 
-It will follow frontend releases of upstream repository.
+It will follow frontend releases of upstream repository and add one digit at the end to avoid tags overlapping. So version `v1.2.4` will be `v1.2.4.0`, or `v1.2.4.1` if newer backed will be created.
 
 For frontend issues please open ticket in upstream repository [OpenGym](https://gitea.com/DuarteSantos/openGym). This Project is only replicated Backend in golang and provide slim image with all in one.
 

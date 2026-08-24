@@ -5,15 +5,15 @@ on:
       - dev_go
 
 jobs:
-  # test:
-  #   uses: ./.github/workflows/test.yml
-  #   secrets:
-  #     CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  test:
+    uses: ./.github/workflows/test.yml
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   # Dev Push
   dev-push:
     runs-on: ubuntu-latest
-    #    needs: test
+       needs: test
 
     if: github.ref == 'refs/heads/dev_go'
     environment: prod
