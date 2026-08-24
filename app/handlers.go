@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -47,6 +48,7 @@ func hLogoutAll(w http.ResponseWriter, r *http.Request) {
 	user.SV = sessionVersion(user) + 1
 	saveDBLocked()
 	dbMu.Unlock()
+	log.Printf("logout/all: sessions invalidated for id=%s name=%q", user.ID, user.Name)
 	w.Header().Set("Set-Cookie", clearCookieHeader())
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -132,6 +134,7 @@ func hPushSubscribe(w http.ResponseWriter, r *http.Request) {
 	})
 	saveDBLocked()
 	dbMu.Unlock()
+	log.Printf("push/subscribe: id=%s name=%q", user.ID, user.Name)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -158,6 +161,7 @@ func hPushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	db.Subs = out
 	saveDBLocked()
 	dbMu.Unlock()
+	log.Printf("push/unsubscribe: id=%s name=%q", user.ID, user.Name)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

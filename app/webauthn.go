@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -137,6 +138,7 @@ func hRegisterOptions(w http.ResponseWriter, r *http.Request) {
 		}
 		dbMu.RUnlock()
 		if !valid {
+			log.Printf("register/options: rejected — invalid invite code %q", code)
 			writeJSON(w, 403, map[string]any{"error": "a valid invite code is required"})
 			return
 		}
@@ -155,11 +157,17 @@ func hRegisterOptions(w http.ResponseWriter, r *http.Request) {
 		webauthn.WithExclusions(nil),
 	)
 	if err != nil {
+		log.Printf("register/options: BeginRegistration failed for name=%q: %v", name, err)
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
 	cid := putChallenge(&challengeEntry{session: *session, name: name, uid: uid, code: code})
-	writeJSON(w, 200, map[string]any{"cid": cid, "options": creation})
+	log.Printf("register/options: challenge issued cid=%s uid=%s name=%q", cid, uid, name)
+	// creation is a *protocol.CredentialCreation, whose only field is `Response` tagged
+	// `json:"publicKey"`. Returning `creation` as-is double-wraps the options the client needs
+	// (`{"options":{"publicKey":{...}}}` instead of `{"options":{...}}`), which is exactly the
+	// shape mismatch vs. the JS backend below — send the flat Response instead.
+	writeJSON(w, 200, map[string]any{"cid": cid, "options": creation.Response})
 }
 
 func hRegisterVerify(w http.ResponseWriter, r *http.Request) {
@@ -173,18 +181,21 @@ func hRegisterVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	c := takeChallenge(body.Cid)
 	if c == nil || c.uid == "" {
+		log.Printf("register/verify: challenge missing/expired cid=%s", body.Cid)
 		writeJSON(w, 400, map[string]any{"error": "challenge expired — try again"})
 		return
 	}
 
 	parsed, err := protocol.ParseCredentialCreationResponseBody(bytes.NewReader(body.Credential))
 	if err != nil {
+		log.Printf("register/verify: parse failed uid=%s: %v", c.uid, err)
 		writeJSON(w, 400, map[string]any{"error": "verification failed: " + err.Error()})
 		return
 	}
 	u := &waUser{id: []byte(c.uid), name: c.name, displayName: c.name}
 	cred, err := wa.CreateCredential(u, c.session, parsed)
 	if err != nil {
+		log.Printf("register/verify: CreateCredential failed uid=%s name=%q: %v", c.uid, c.name, err)
 		writeJSON(w, 400, map[string]any{"error": "verification failed: " + err.Error()})
 		return
 	}
@@ -194,6 +205,7 @@ func hRegisterVerify(w http.ResponseWriter, r *http.Request) {
 	dbMu.Lock()
 	if findCredByID(credID) != nil {
 		dbMu.Unlock()
+		log.Printf("register/verify: rejected — credential already registered credID=%s", credID)
 		writeJSON(w, 409, map[string]any{"error": "credential already registered"})
 		return
 	}
@@ -208,6 +220,7 @@ func hRegisterVerify(w http.ResponseWriter, r *http.Request) {
 		}
 		if invite == nil {
 			dbMu.Unlock()
+			log.Printf("register/verify: rejected — invite code %q no longer valid uid=%s", c.code, c.uid)
 			writeJSON(w, 403, map[string]any{"error": "invite code is no longer valid — ask for a new one"})
 			return
 		}
@@ -234,6 +247,7 @@ func hRegisterVerify(w http.ResponseWriter, r *http.Request) {
 	saveDBLocked()
 	dbMu.Unlock()
 
+	log.Printf("register/verify: new user registered id=%s name=%q invitedBy=%q", user.ID, user.Name, user.InvitedBy)
 	w.Header().Set("Set-Cookie", sessionCookieHeader(user))
 	writeJSON(w, 200, map[string]any{"user": publicUser(user)})
 }
@@ -243,11 +257,20 @@ func hLoginOptions(w http.ResponseWriter, r *http.Request) {
 		webauthn.WithUserVerification(protocol.VerificationPreferred),
 	)
 	if err != nil {
+		log.Printf("login/options: BeginDiscoverableLogin failed: %v", err)
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
+	// Same double-wrap issue as register/options (send assertion.Response, not assertion), plus
+	// the library leaves AllowedCredentials nil for a discoverable/usernameless login, which
+	// `omitempty` then drops from the JSON entirely. The frontend (and the JS backend's
+	// behavior) expects an explicit `"allowCredentials":[]` here, so fill it in.
+	if assertion.Response.AllowedCredentials == nil {
+		assertion.Response.AllowedCredentials = []protocol.CredentialDescriptor{}
+	}
 	cid := putChallenge(&challengeEntry{session: *session})
-	writeJSON(w, 200, map[string]any{"cid": cid, "options": assertion})
+	log.Printf("login/options: challenge issued cid=%s", cid)
+	writeJSON(w, 200, map[string]any{"cid": cid, "options": assertion.Response})
 }
 
 func hLoginVerify(w http.ResponseWriter, r *http.Request) {
@@ -261,11 +284,13 @@ func hLoginVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	c := takeChallenge(body.Cid)
 	if c == nil {
+		log.Printf("login/verify: challenge missing/expired cid=%s", body.Cid)
 		writeJSON(w, 400, map[string]any{"error": "challenge expired — try again"})
 		return
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBody(bytes.NewReader(body.Credential))
 	if err != nil {
+		log.Printf("login/verify: parse failed: %v", err)
 		writeJSON(w, 400, map[string]any{"error": "verification failed: " + err.Error()})
 		return
 	}
@@ -276,6 +301,7 @@ func hLoginVerify(w http.ResponseWriter, r *http.Request) {
 	storedCred := findCredByID(credID)
 	dbMu.RUnlock()
 	if storedCred == nil {
+		log.Printf("login/verify: unknown passkey credID=%s", credID)
 		writeJSON(w, 404, map[string]any{"error": "unknown passkey — create a profile first"})
 		return
 	}
@@ -290,6 +316,7 @@ func hLoginVerify(w http.ResponseWriter, r *http.Request) {
 
 	updatedCred, err := wa.ValidateDiscoverableLogin(handler, c.session, parsed)
 	if err != nil {
+		log.Printf("login/verify: ValidateDiscoverableLogin failed credID=%s: %v", credID, err)
 		writeJSON(w, 400, map[string]any{"error": "verification failed: " + err.Error()})
 		return
 	}
@@ -301,13 +328,16 @@ func hLoginVerify(w http.ResponseWriter, r *http.Request) {
 	dbMu.Unlock()
 
 	if user == nil {
+		log.Printf("login/verify: credential %s has no matching user (userID=%s)", credID, storedCred.UserID)
 		writeJSON(w, 500, map[string]any{"error": "user missing"})
 		return
 	}
 	if user.Disabled {
+		log.Printf("login/verify: rejected — disabled account id=%s name=%q", user.ID, user.Name)
 		writeJSON(w, 403, map[string]any{"error": "this account has been disabled"})
 		return
 	}
+	log.Printf("login/verify: user logged in id=%s name=%q", user.ID, user.Name)
 	w.Header().Set("Set-Cookie", sessionCookieHeader(user))
 	writeJSON(w, 200, map[string]any{"user": publicUser(user)})
 }

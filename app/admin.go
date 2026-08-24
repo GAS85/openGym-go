@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -119,7 +120,8 @@ func hAdminUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func hAdminUserDisable(w http.ResponseWriter, r *http.Request) {
-	if requireAdmin(w, r) == nil {
+	admin := requireAdmin(w, r)
+	if admin == nil {
 		return
 	}
 	var body struct {
@@ -148,6 +150,7 @@ func hAdminUserDisable(w http.ResponseWriter, r *http.Request) {
 	if u.Disabled {
 		dropPresence(u.ID) // drop them off "training now" at once
 	}
+	log.Printf("admin/user/disable: id=%s name=%q disabled=%v by=%s", u.ID, u.Name, u.Disabled, admin.ID)
 	writeJSON(w, 200, map[string]any{"ok": true, "id": u.ID, "disabled": u.Disabled})
 }
 
@@ -216,11 +219,13 @@ func hAdminInvitesNew(w http.ResponseWriter, r *http.Request) {
 	invite := &Invite{Code: code, Note: note, CreatedBy: admin.ID, Created: time.Now().UTC().Format(time.RFC3339)}
 	db.Invites = append(db.Invites, invite)
 	saveDBLocked()
+	log.Printf("admin/invites/new: code=%s note=%q by=%s", invite.Code, invite.Note, admin.ID)
 	writeJSON(w, 200, map[string]any{"invite": invite})
 }
 
 func hAdminInvitesRevoke(w http.ResponseWriter, r *http.Request) {
-	if requireAdmin(w, r) == nil {
+	admin := requireAdmin(w, r)
+	if admin == nil {
 		return
 	}
 	var body struct {
@@ -257,6 +262,7 @@ func hAdminInvitesRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	db.Invites = out
 	saveDBLocked()
+	log.Printf("admin/invites/revoke: code=%s by=%s", inv.Code, admin.ID)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
