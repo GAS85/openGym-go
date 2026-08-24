@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     #    needs: test
 
-    if: github.ref == 'refs/heads/dev'
+    if: github.ref == 'refs/heads/dev_go'
     environment: prod
 
     steps:
